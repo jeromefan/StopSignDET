@@ -55,26 +55,6 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     return img, ratio, (dw, dh)
 
 
-class Render(torch.autograd.Function):
-    def __init__(self, renderer):
-        super(Render, self).__init__()
-        self.renderer = renderer
-
-    def forward(self, vertices, faces, textures=None):
-        vs = vertices
-        vs[:, :, 1] *= -1
-        fs = faces
-        if textures is None:
-            self.mask_only = True
-            masks = self.renderer.forward_mask(vs, fs)
-            return masks
-        else:
-            self.mask_only = False
-            ts = textures
-            imgs = self.renderer.forward_img(vs, fs, ts)
-            return imgs
-
-
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)

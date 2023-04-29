@@ -6,7 +6,7 @@ from PIL import Image
 from pathlib import Path
 from torch.optim import Adam
 from torchvision import transforms
-# from engine.loss_compute import ComputeLoss
+
 from engine.misc import number_classes, class_names
 import sys
 sys.path.append('engine/yolov5')
@@ -33,15 +33,21 @@ def get_args_parser():
 
 
 def main(args):
-    device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    trans = transforms.Compose([
+        transforms.Resize((640, 640)),
+        transforms.ToTensor()
+    ])
+
+    unloader = transforms.ToPILImage()
 
     # data
-    patch = torch.randn(3, 50, 50, device=device)
-    patch_param = torch.autograd.Variable(patch, requires_grad=True)
+    patch_param = torch.autograd.Variable(torch.randn(
+        3, 50, 50, device=device), requires_grad=True)
     optim = Adam([patch_param], lr=args.learning_rate)
-
-    trans = transforms.ToTensor()
-    data = trans(Image.open('assets/T_stop_d.TGA'))
+    patch = unloader(patch_param.detach().cpu())
+    data = Image.open('assets/T_stop_d.TGA')
 
     # model
     repo_loc = Path(os.path.dirname(
@@ -50,34 +56,42 @@ def main(args):
                            model='custom',
                            path=Path('./weights/yolov5x.pt'),
                            source='local',
-                           device=0)
+                           device=0 if torch.cuda.is_available() else 'cpu')
 
-    # # model parameters
-    # with open(args.hyp) as f:
-    #     hyp = yaml.safe_load(f)
-    # nl = model.model.model.model[-1].nl
-    # hyp['box'] *= 3. / nl  # scale to layers
-    # hyp['cls'] *= number_classes / 80. * 3. / nl  # scale to classes and layers
-    # # scale to image size and layers
-    # hyp['obj'] *= (args.image_size / 640) ** 2 * 3. / nl
-    # model.nc = number_classes  # attach number of classes to model
-    # model.hyp = hyp  # attach hyperparameters to model
-    # model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    # model.names = class_names
-
-    # # Start training
-    # compute_loss = ComputeLoss(model)  # init loss class
+    loss_calculator = ComputeLoss(model.model.model)
 
     for i in range(350, 400):
         for j in range(400, 450):
-            data[0][j][i] = patch[0][j-400][i-350]
-            data[1][j][i] = patch[1][j-400][i-350]
-            data[2][j][i] = patch[2][j-400][i-350]
+            data.putpixel((i, j), patch.getpixel((i-350, j-400)))
+    out = model(data)
+    print(out.pred)
+    y = model(trans(data).unsqueeze(0))
+    label_1 = torch.zeros((1, 6), device=device)
+    label_1[0][1] = 11.0
+    label_1[0][2] = out.pred[0][0][0]
+    label_1[0][3] = out.pred[0][0][1]
+    label_1[0][4] = out.pred[0][0][2]
+    label_1[0][5] = out.pred[0][0][3]
 
-    # label_tensor = torch.zeros((1, 1, 1))  # 1个目标，5个元素
-    # label_tensor[0, 0, 0] = 0  # 类别索引
-    out = model(data.unsqueeze(0))
-    print(out.shape)
+    # out.pred[0]
+
+    label_2 = non_max_suppression(y)[0]
+    label_2_2 = non_max_suppression(y)[0]
+    label_2_2[0][5] = 0
+
+    print('labels:')
+    print(label_1)
+    print(label_2)
+    print(label_2_2)
+
+    loss_1 = loss_calculator(out.pred, label_1)
+    loss_2 = loss_calculator(y, label_2)
+    loss_2_2 = loss_calculator(y, label_2_2)
+
+    print('loss:')
+    # print(loss_1)
+    print(loss_2)
+    print(loss_2_2)
 
     # loss, _ = compute_loss(out, label_tensor.to(device))
     # optim.zero_grad()
@@ -89,11 +103,12 @@ def main(args):
     #         data[0][j][i] = patch[0][j-400][i-350]
     #         data[1][j][i] = patch[1][j-400][i-350]
     #         data[2][j][i] = patch[2][j-400][i-350]
-    # unloader = transforms.ToPILImage()
     # unloader(data).save('test.png')
 
 
 if __name__ == '__main__':
+    from engine.yolov5.utils.loss import ComputeLoss
+    from engine.yolov5.utils.general import non_max_suppression
 
     args = get_args_parser()
     args = args.parse_args()
