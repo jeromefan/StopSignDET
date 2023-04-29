@@ -3,7 +3,7 @@ import carla
 import pygame
 import argparse
 from imutils.video import FPS
-from CarlaEngine import CarlaClient
+from engine.CarlaEngine import CarlaClient
 
 
 def get_args_parser():
