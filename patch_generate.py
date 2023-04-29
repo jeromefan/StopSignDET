@@ -1,3 +1,4 @@
+import os
 import yaml
 import torch
 import argparse
@@ -5,9 +6,10 @@ from PIL import Image
 from pathlib import Path
 from torch.optim import Adam
 from torchvision import transforms
-from engine.loss_compute import ComputeLoss
-from engine.model_choice.yolov5 import utils
+# from engine.loss_compute import ComputeLoss
 from engine.misc import number_classes, class_names
+import sys
+sys.path.append('engine/yolov5')
 
 
 def get_args_parser():
@@ -32,7 +34,6 @@ def get_args_parser():
 
 def main(args):
     device = torch.device('cuda')
-    utils.notebook_init()
 
     # data
     patch = torch.randn(3, 50, 50, device=device)
@@ -43,8 +44,8 @@ def main(args):
     data = trans(Image.open('assets/T_stop_d.TGA'))
 
     # model
-    repo_loc = Path(
-        '/home/ubuntu/workspace/StopSignDET/engine/model_choice/yolov5/')
+    repo_loc = Path(os.path.dirname(
+        os.path.abspath(__file__))+'/engine/yolov5/')
     model = torch.hub.load(repo_or_dir=repo_loc,
                            model='custom',
                            path=Path('./weights/yolov5x.pt'),
@@ -67,8 +68,6 @@ def main(args):
     # # Start training
     # compute_loss = ComputeLoss(model)  # init loss class
 
-    model.eval()
-
     for i in range(350, 400):
         for j in range(400, 450):
             data[0][j][i] = patch[0][j-400][i-350]
@@ -77,11 +76,8 @@ def main(args):
 
     # label_tensor = torch.zeros((1, 1, 1))  # 1个目标，5个元素
     # label_tensor[0, 0, 0] = 0  # 类别索引
-    print(data.shape)
-    print(data.unsqueeze(0).shape)
     out = model(data.unsqueeze(0))
     print(out.shape)
-    out.render()
 
     # loss, _ = compute_loss(out, label_tensor.to(device))
     # optim.zero_grad()
