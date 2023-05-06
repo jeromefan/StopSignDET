@@ -1,8 +1,8 @@
 # StopSignDET
 
-Use YOLOv8 to detect Stop Signs in Carla simulator.
+Use YOLOv8/v5 to detect and attack Stop Signs in Carla simulator.
 
-使用 YOLO v8 在 Carla 模拟器中检测停车标志
+使用 YOLO v8/v5 在 Carla 模拟器中检测停车标志
 
 ## Prerequisites
 
@@ -10,4 +10,6 @@ Use YOLOv8 to detect Stop Signs in Carla simulator.
 
 ## Usage
 
-`python detect.py`
+`python detect.py -m yolov8m -l 2000`
+
+`python patch_generate.py`
