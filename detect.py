@@ -43,7 +43,7 @@ def get_args_parser():
 def main(args):
     try:
         carla_client = CarlaClient(
-            yolo_model=args.yolo_model,
+            yolo_model_choice=args.yolo_model,
             frames_per_second=args.frames_per_second,
             classes=args.classes
         )
