@@ -44,6 +44,7 @@ class CarlaClient():
                                                  f'./weights/{yolo_model_choice}.pt'),
                                              source='local',
                                              device=0 if torch.cuda.is_available() else 'cpu')
+            self.yolo_model.classes = classes
 
         if not os.path.exists('results'):
             os.mkdir('results')
