@@ -16,7 +16,7 @@ def get_args_parser():
         '-m', '--yolo-model',
         default='yolov8m',
         type=str,
-        help='YOLO v8 模型 (n、s、m、l、x)'
+        help='YOLO v8 模型 (n、s、m、l、x) 或 YOLO v5 模型 (n、s、m、l、x)'
     )
     parser.add_argument(
         '-l', '--video-length',
