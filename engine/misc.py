@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 
-def square_transform(data_shape, img_size):
+def square_transform(data_shape, xyxy):
     patch = np.random.rand(1, 3, 120, 120)
     patch_transformed = np.zeros(data_shape)
     m_size = 120
@@ -14,14 +14,18 @@ def square_transform(data_shape, img_size):
         for j in range(3):
             patch[0][j] = np.rot90(patch[0][j], rot)
         # random location
-        random_x = np.random.choice(img_size)
-        if random_x + m_size > img_size:
-            while random_x + m_size > img_size:
-                random_x = np.random.choice(img_size)
-        random_y = np.random.choice(img_size)
-        if random_y + m_size > img_size:
-            while random_y + m_size > img_size:
-                random_y = np.random.choice(img_size)
+        random_x = np.random.choice(
+            [x for x in range(xyxy[0], xyxy[2] - m_size + 1)])
+        if random_x + m_size > xyxy[2]:
+            while random_x + m_size > xyxy[2]:
+                random_x = np.random.choice(
+                    [x for x in range(xyxy[0], xyxy[2] - m_size + 1)])
+        random_y = np.random.choice(
+            [y for y in range(xyxy[1], xyxy[3] - m_size + 1)])
+        if random_y + m_size > xyxy[3]:
+            while random_y + m_size > xyxy[3]:
+                random_y = np.random.choice(
+                    [y for y in range(xyxy[1], xyxy[3] - m_size + 1)])
         # apply patch
         patch_transformed[i][0][random_x:random_x+m_size,
                                 random_y:random_y+m_size] = patch[0][0]

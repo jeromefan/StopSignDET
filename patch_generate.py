@@ -1,13 +1,22 @@
 import os
+import cv2
 import sys
 import torch
 import argparse
+import numpy as np
 from tqdm import tqdm
 from PIL import Image
 from pathlib import Path
+from copy import deepcopy
 from torchvision import transforms
 from torch.autograd import Variable
 from engine.misc import square_transform
+sys.path.append('engine/yolov5')  # NOQA: E402
+from engine.grad_cam import GradCAM
+from engine.yolov5.utils.loss import ComputeLoss
+from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
+
+torch.set_printoptions(precision=4, sci_mode=False)
 
 
 def get_args_parser():
@@ -24,9 +33,15 @@ def get_args_parser():
     )
     parser.add_argument(
         '-m', '--yolo-model',
-        default='yolov5m',
+        default='yolov5s',
         type=str,
         help='YOLO v5 模型 (n、s、m、l、x)'
+    )
+    parser.add_argument(
+        '-lr', '--learning-rate',
+        default=0.1,
+        type=float,
+        help='迭代步长'
     )
     parser.add_argument(
         '-c', '--cls',
@@ -38,7 +53,7 @@ def get_args_parser():
         '-i', '--max-iter',
         default=1000,
         type=int,
-        help='攻击目标类别'
+        help='最大迭代次数'
     )
 
     return parser
@@ -48,11 +63,11 @@ def build_targets(model, data, target_label):
     model.eval()
     pred = non_max_suppression(model(data))
     xyxy = pred[0][0, :4]
-    print(xyxy)
+    print(xyxy.cpu().numpy())
     xywhn = xyxy2xywhn(xyxy.unsqueeze(0)).squeeze(0)
     targets = [0.0, target_label, xywhn[0].item(), xywhn[1].item(),
                xywhn[2].item(), xywhn[3].item()]
-    return torch.tensor(targets).unsqueeze(0)
+    return torch.tensor(targets).unsqueeze(0), xyxy.cpu().numpy().astype('i')
 
 
 def main(args):
@@ -83,10 +98,30 @@ def main(args):
     unloader = transforms.ToPILImage()
 
     # data
-    data = trans(Image.open('assets/T_stop_d.TGA')).unsqueeze(0).to(device)
-    targets = build_targets(model, data, args.cls)
+    data = trans(Image.open('0_85.jpg')).unsqueeze(0).to(device)
+
+    saliency_method = GradCAM(
+        model=deepcopy(model.model),
+        layer_name='model_23_cv3_act',
+        cls=11
+    )
+    saliency_map = saliency_method(data)
+    file_handle = open('1.txt', mode='w')
+    x = deepcopy(saliency_map).cpu().numpy()
+    x = x.tolist()
+    strNums = [str(x_i) for x_i in x]
+    str1 = ",".join(strNums)
+    file_handle.write(str1)
+
+    saliency_map = saliency_map.squeeze(0).mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).detach().cpu().numpy().astype(
+        np.uint8)
+    heatmap = cv2.applyColorMap(saliency_map, cv2.COLORMAP_JET)
+    cv2.imwrite('results/gradcam.png', heatmap)
+    quit()
+
+    targets, xyxy = build_targets(model, data, args.cls)
     patch_transformed, mask = square_transform(
-        data.shape, args.img_size)
+        data.shape, xyxy)
     targets, patch_transformed, mask = targets.to(device), patch_transformed.to(
         device), mask.to(device)
     data_with_patch = torch.mul(
@@ -116,7 +151,7 @@ def main(args):
 
         patch_grad = data_with_patch.grad.data.clone()
         data_with_patch.grad.data.zero_()
-        patch_transformed += 0.1 * patch_grad
+        patch_transformed += args.learning_rate * patch_grad
         patch_transformed = torch.clamp(patch_transformed, min=0., max=1.)
 
         # Test
@@ -169,11 +204,6 @@ def test(args, save_name):
 
 
 if __name__ == '__main__':
-    sys.path.append('engine/yolov5')
-    from engine.yolov5.utils.loss import ComputeLoss
-    from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
-
-    torch.set_printoptions(precision=4, sci_mode=False)
 
     args = get_args_parser()
     args = args.parse_args()
