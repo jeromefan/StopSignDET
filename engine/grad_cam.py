@@ -8,7 +8,7 @@ from engine.yolov5.utils.metrics import box_iou
 from engine.yolov5.utils.general import xywh2xyxy
 
 
-class GradCAM:
+class GradCam:
     # 初始化，得到target_layer层
     def __init__(self, model, layer_name, cls=None):
         self.model = model

@@ -12,7 +12,7 @@ from torchvision import transforms
 from torch.autograd import Variable
 from engine.misc import square_transform
 sys.path.append('engine/yolov5')  # NOQA: E402
-from engine.grad_cam import GradCAM
+from engine.grad_cam import GradCam
 from engine.yolov5.utils.loss import ComputeLoss
 from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
 
@@ -24,6 +24,12 @@ def get_args_parser():
     parser = argparse.ArgumentParser(
         '以Yolo v5为攻击模型, 生成 Adversarial Patch',
         add_help=False
+    )
+    parser.add_argument(
+        '-img', '--img-path',
+        default='assets/0_85.jpg',
+        type=str,
+        help='图像读取路径'
     )
     parser.add_argument(
         '-s', '--img-size',
@@ -98,24 +104,18 @@ def main(args):
     unloader = transforms.ToPILImage()
 
     # data
-    data = trans(Image.open('0_85.jpg')).unsqueeze(0).to(device)
+    data = trans(Image.open(args.img_path)).unsqueeze(0).to(device)
 
-    saliency_method = GradCAM(
+    # 将 models.yolo.DetectionModel 复制并送入 GradCam 中
+    grad_cam_model = GradCam(
         model=deepcopy(model.model),
         layer_name='model_23_cv3_act',
         cls=11
     )
-    saliency_map = saliency_method(data)
-    file_handle = open('1.txt', mode='w')
-    x = deepcopy(saliency_map).cpu().numpy()
-    x = x.tolist()
-    strNums = [str(x_i) for x_i in x]
-    str1 = ",".join(strNums)
-    file_handle.write(str1)
-
-    saliency_map = saliency_map.squeeze(0).mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).detach().cpu().numpy().astype(
+    heatmap = grad_cam_model(data)
+    heatmap = heatmap.squeeze(0).mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).detach().cpu().numpy().astype(
         np.uint8)
-    heatmap = cv2.applyColorMap(saliency_map, cv2.COLORMAP_JET)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     cv2.imwrite('results/gradcam.png', heatmap)
     quit()
 
