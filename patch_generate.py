@@ -106,6 +106,7 @@ def main(args):
             unloader(data_with_patch.squeeze(0)).save(save_name)
             break
 
+        # Train
         model.train()
         data_with_patch = Variable(
             data_with_patch.data, requires_grad=True)
@@ -119,11 +120,10 @@ def main(args):
         patch_transformed = torch.clamp(patch_transformed, min=0., max=1.)
 
         # Test
+        model.eval()
         data_with_patch = torch.mul(
             (1-mask), data) + torch.mul(mask, patch_transformed)
         data_with_patch = data_with_patch.to(device)
-        model.eval()
-
         target_pred = non_max_suppression(model(data_with_patch))[0].cpu()
         if target_pred.shape != torch.Size([0, 6]):
             target_pred = (target_pred[0, 5]).item()
