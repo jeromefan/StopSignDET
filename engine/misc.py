@@ -1,9 +1,30 @@
+import sys
 import torch
-import cv2
 import numpy as np
+sys.path.append('engine/yolov5')  # NOQA: E402
+from engine.grad_cam import GradCam
+from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
 
 
-def square_transform(data_shape, xyxy):
+def build_targets(model, data, target_label):
+    pred = non_max_suppression(model(data), max_det=1)
+    xyxy = pred[0][0, :4]
+    print(f'未归一化的xyxy框: {xyxy}')
+    xywhn = xyxy2xywhn(xyxy.unsqueeze(0)).squeeze(0)
+    targets = [0.0, target_label, xywhn[0].item(), xywhn[1].item(),
+               xywhn[2].item(), xywhn[3].item()]
+    return torch.tensor(targets).unsqueeze(0)
+
+
+def square_transform(model, data, data_shape):
+
+    # 将 models.yolo.DetectionModel 复制并送入 GradCam 中
+    grad_cam_model = GradCam(
+        model=model, layer_name='model_23_cv3_act', cls=11)
+    heatmap = grad_cam_model(data)
+    x = torch.argmax(heatmap).item() // data_shape[-1]
+    y = torch.argmax(heatmap).item() % data_shape[-1]
+
     patch = np.random.rand(1, 3, 120, 120)
     patch_transformed = np.zeros(data_shape)
     m_size = 120
@@ -14,25 +35,21 @@ def square_transform(data_shape, xyxy):
         for j in range(3):
             patch[0][j] = np.rot90(patch[0][j], rot)
         # random location
-        random_x = np.random.choice(
-            [x for x in range(xyxy[0], xyxy[2] - m_size + 1)])
-        if random_x + m_size > xyxy[2]:
-            while random_x + m_size > xyxy[2]:
-                random_x = np.random.choice(
-                    [x for x in range(xyxy[0], xyxy[2] - m_size + 1)])
-        random_y = np.random.choice(
-            [y for y in range(xyxy[1], xyxy[3] - m_size + 1)])
-        if random_y + m_size > xyxy[3]:
-            while random_y + m_size > xyxy[3]:
-                random_y = np.random.choice(
-                    [y for y in range(xyxy[1], xyxy[3] - m_size + 1)])
+        while x - m_size // 2 < 0:
+            x += 1
+        while x + m_size // 2 > data_shape[-1]:
+            x -= 1
+        while y - m_size // 2 < 0:
+            y += 1
+        while y + m_size // 2 > data_shape[-1]:
+            y -= 1
         # apply patch
-        patch_transformed[i][0][random_x:random_x+m_size,
-                                random_y:random_y+m_size] = patch[0][0]
-        patch_transformed[i][1][random_x:random_x+m_size,
-                                random_y:random_y+m_size] = patch[0][1]
-        patch_transformed[i][2][random_x:random_x+m_size,
-                                random_y:random_y+m_size] = patch[0][2]
+        patch_transformed[i][0][x - m_size // 2:x + m_size // 2,
+                                y - m_size // 2:y + m_size // 2] = patch[0][0]
+        patch_transformed[i][1][x - m_size // 2:x + m_size // 2,
+                                y - m_size // 2:y + m_size // 2] = patch[0][1]
+        patch_transformed[i][2][x - m_size // 2:x + m_size // 2,
+                                y - m_size // 2:y + m_size // 2] = patch[0][2]
     mask = np.copy(patch_transformed)
     mask[mask != 0] = 1.0
     patch_transformed, mask = torch.FloatTensor(

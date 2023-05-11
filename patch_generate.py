@@ -1,20 +1,20 @@
 import os
-import cv2
 import sys
+import time
 import torch
 import argparse
-import numpy as np
+
 from tqdm import tqdm
 from PIL import Image
 from pathlib import Path
 from copy import deepcopy
 from torchvision import transforms
 from torch.autograd import Variable
-from engine.misc import square_transform
+from torch.utils.tensorboard import SummaryWriter
+
+from engine.misc import build_targets, square_transform
 sys.path.append('engine/yolov5')  # NOQA: E402
-from engine.grad_cam import GradCam
 from engine.yolov5.utils.loss import ComputeLoss
-from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
 
 torch.set_printoptions(precision=4, sci_mode=False)
 
@@ -27,7 +27,7 @@ def get_args_parser():
     )
     parser.add_argument(
         '-img', '--img-path',
-        default='assets/0_85.jpg',
+        default='assets/T_stop_d.TGA',
         type=str,
         help='图像读取路径'
     )
@@ -65,21 +65,12 @@ def get_args_parser():
     return parser
 
 
-def build_targets(model, data, target_label):
-    model.eval()
-    pred = non_max_suppression(model(data))
-    xyxy = pred[0][0, :4]
-    print(xyxy.cpu().numpy())
-    xywhn = xyxy2xywhn(xyxy.unsqueeze(0)).squeeze(0)
-    targets = [0.0, target_label, xywhn[0].item(), xywhn[1].item(),
-               xywhn[2].item(), xywhn[3].item()]
-    return torch.tensor(targets).unsqueeze(0), xyxy.cpu().numpy().astype('i')
-
-
 def main(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if not os.path.exists('results'):
         os.mkdir('results')
+    tb_name = time.strftime('%y%m%d-%H%M', time.localtime())
+    writer = SummaryWriter(f'results/{tb_name}')
 
     # model
     '''
@@ -97,48 +88,51 @@ def main(args):
                            device=0 if torch.cuda.is_available() else 'cpu')
     compute_loss = ComputeLoss(model.model)
 
-    trans = transforms.Compose([
+    '''
+        models.common.AutoShape
+            models.common.DetectMultiBackend
+                models.yolo.DetectionModel
+                    torch.nn.modules.container.Sequential
+    '''
+    detect_model = torch.hub.load(repo_or_dir=repo_loc,
+                                  model='custom',
+                                  path=Path(f'./weights/{args.yolo_model}.pt'),
+                                  source='local',
+                                  _verbose=False,
+                                  device='cpu')
+    detect_model.max_det = 1
+
+    loader = transforms.Compose([
         transforms.Resize((args.img_size, args.img_size)),
         transforms.ToTensor()
     ])
     unloader = transforms.ToPILImage()
 
     # data
-    data = trans(Image.open(args.img_path)).unsqueeze(0).to(device)
-
-    # 将 models.yolo.DetectionModel 复制并送入 GradCam 中
-    grad_cam_model = GradCam(
-        model=deepcopy(model.model),
-        layer_name='model_23_cv3_act',
-        cls=11
-    )
-    heatmap = grad_cam_model(data)
-    heatmap = heatmap.squeeze(0).mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).detach().cpu().numpy().astype(
-        np.uint8)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-    cv2.imwrite('results/gradcam.png', heatmap)
-    quit()
-
-    targets, xyxy = build_targets(model, data, args.cls)
+    data = loader(Image.open(args.img_path)).unsqueeze(0)
+    targets = build_targets(detect_model, data, args.cls)
     patch_transformed, mask = square_transform(
-        data.shape, xyxy)
-    targets, patch_transformed, mask = targets.to(device), patch_transformed.to(
-        device), mask.to(device)
-    data_with_patch = torch.mul(
-        (1 - mask), data) + torch.mul(mask, patch_transformed)
-    print(f'Target is: {targets}')
+        deepcopy(detect_model.model.model), data, data.shape)
+    data, targets, patch_transformed, mask = data.to(device), targets.to(
+        device), patch_transformed.to(device), mask.to(device)
+    print(f'攻击目标为: {targets}')
 
-    model.eval()
-    target_pred = (non_max_suppression(
-        model(data_with_patch))[0].cpu()[0, 5]).item()
-
-    save_name = None
+    lr = args.learning_rate
     pbar = tqdm(range(args.max_iter))
-    for count in pbar:
+    for i in pbar:
+
+        # Test
+        detect_model.eval()
+        data_with_patch = torch.mul(
+            (1-mask), data) + torch.mul(mask, patch_transformed)
+        detection = detect_model(unloader(data_with_patch.squeeze(0)))
+        data_with_patch = data_with_patch.to(device)
+        target_pred = detection.pred[0][0, 5].item()
+        target_conf = detection.pred[0][0, 4].item()
+        writer.add_scalars(
+            'test', {'pred': target_pred, 'conf': target_conf}, i + 1)
 
         if target_pred == args.cls:
-            save_name = f'results/{count}.png'
-            unloader(data_with_patch.squeeze(0)).save(save_name)
             break
 
         # Train
@@ -148,64 +142,30 @@ def main(args):
         data_with_patch = data_with_patch.to(device)
         target_loss, _ = compute_loss(model(data_with_patch), targets)
         target_loss.backward()
-
-        patch_grad = data_with_patch.grad.data.clone()
+        patch_transformed -= lr * data_with_patch.grad.data.sign()
+        if i % 100 == 0:
+            lr = lr * 0.9
         data_with_patch.grad.data.zero_()
-        patch_transformed += args.learning_rate * patch_grad
-        patch_transformed = torch.clamp(patch_transformed, min=0., max=1.)
-
-        # Test
-        model.eval()
-        data_with_patch = torch.mul(
-            (1-mask), data) + torch.mul(mask, patch_transformed)
-        data_with_patch = data_with_patch.to(device)
-        target_pred = non_max_suppression(model(data_with_patch))[0].cpu()
-        if target_pred.shape != torch.Size([0, 6]):
-            target_pred = (target_pred[0, 5]).item()
-        else:
-            target_pred = None
+        writer.add_scalar('train', target_loss.item(), i + 1)
 
         pbar.set_description(
-            f'pred: {target_pred}, loss: {target_loss.item()}')
+            f'pred cls is {target_pred} with conf {target_conf}, loss: {target_loss.item()}')
 
-    del model
-    return save_name
+    data_with_patch = torch.mul(
+        (1-mask), data) + torch.mul(mask, patch_transformed)
+    detection = detect_model(unloader(data_with_patch.squeeze(0)))
+    target_pred = detection.pred[0][0, 5].item()
+    print(f'最终攻击结果: {target_pred}')
+    annotated_img = Image.fromarray(
+        detection.render()[0].astype('uint8')).convert('RGB')
+    annotated_img.save(f'results/{tb_name}.png')
 
-
-def test(args, save_name):
-    if save_name is not None:
-
-        # model
-        '''
-            models.common.AutoShape
-                models.common.DetectMultiBackend
-                    models.yolo.DetectionModel
-                        torch.nn.modules.container.Sequential
-        '''
-        repo_loc = Path(os.path.dirname(
-            os.path.abspath(__file__))+'/engine/yolov5/')
-        model = torch.hub.load(repo_or_dir=repo_loc,
-                               model='custom',
-                               path=Path(f'./weights/{args.yolo_model}.pt'),
-                               source='local',
-                               _verbose=False,
-                               device='cpu')
-        img = Image.open(save_name)
-        annotated_img = Image.fromarray(
-            model(img).render()[0].astype('uint8')).convert('RGB')
-        annotated_img.save('results/det_plot.png')
-        trans = transforms.Compose([
-            transforms.Resize((args.img_size, args.img_size)),
-            transforms.ToTensor()
-        ])
-        print(non_max_suppression(model(trans(img).unsqueeze(0))))
-    else:
-        print('Attack Failure!')
+    writer.flush()
+    writer.close()
 
 
 if __name__ == '__main__':
 
     args = get_args_parser()
     args = args.parse_args()
-    save_name = main(args)
-    test(args, save_name)
+    main(args)
