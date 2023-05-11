@@ -45,7 +45,7 @@ def get_args_parser():
     )
     parser.add_argument(
         '-lr', '--learning-rate',
-        default=0.1,
+        default=100,
         type=float,
         help='迭代步长'
     )
