@@ -1,6 +1,6 @@
 # Carla Simulator, build from source, version 0.9.14
-# python 3.8.13
-# pytorch 1.13
+# python
+# pytorch
 
 imutils==0.5.4
 opencv_python==4.7.0.72
