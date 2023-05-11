@@ -160,14 +160,15 @@ def main(args):
         if detection.pred[0].shape != torch.Size([0, 6]):
             target_pred = detection.pred[0][0, 5].item()
             target_conf = detection.pred[0][0, 4].item()
-            writer.add_scalars(
-                'test', {'pred': target_pred, 'conf': target_conf}, i + 1)
 
             if target_pred == args.cls:
                 break
         else:
             target_pred = -1
             target_conf = -1
+
+        writer.add_scalars(
+            'test', {'pred': target_pred, 'conf': target_conf}, i + 1)
 
         # Train
         model.train()
