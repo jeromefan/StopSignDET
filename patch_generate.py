@@ -126,23 +126,30 @@ def main(args):
         data_with_patch = torch.mul(
             (1-mask), data) + torch.mul(mask, patch_transformed)
         detection = detect_model(unloader(data_with_patch.squeeze(0)))
-        data_with_patch = data_with_patch.to(device)
-        target_pred = detection.pred[0][0, 5].item()
-        target_conf = detection.pred[0][0, 4].item()
-        writer.add_scalars(
-            'test', {'pred': target_pred, 'conf': target_conf}, i + 1)
 
-        if target_pred == args.cls:
-            break
+        if detection.pred[0].shape != torch.Size([0, 6]):
+            target_pred = detection.pred[0][0, 5].item()
+            target_conf = detection.pred[0][0, 4].item()
+            writer.add_scalars(
+                'test', {'pred': target_pred, 'conf': target_conf}, i + 1)
+
+            if target_pred == args.cls:
+                break
+        else:
+            # break
+            target_pred = None
+            target_conf = None
 
         # Train
         model.train()
+        data_with_patch = data_with_patch.to(device)
         data_with_patch = Variable(
             data_with_patch.data, requires_grad=True)
         data_with_patch = data_with_patch.to(device)
         target_loss, _ = compute_loss(model(data_with_patch), targets)
         target_loss.backward()
         patch_transformed -= lr * data_with_patch.grad.data.sign()
+        patch_transformed = torch.clamp(patch_transformed, min=0., max=1.)
         if i % 100 == 0:
             lr = lr * 0.9
         data_with_patch.grad.data.zero_()
@@ -154,7 +161,10 @@ def main(args):
     data_with_patch = torch.mul(
         (1-mask), data) + torch.mul(mask, patch_transformed)
     detection = detect_model(unloader(data_with_patch.squeeze(0)))
-    target_pred = detection.pred[0][0, 5].item()
+    if detection.pred[0].shape != torch.Size([0, 6]):
+        target_pred = detection.pred[0][0, 5].item()
+    else:
+        target_pred = None
     print(f'最终攻击结果: {target_pred}')
     annotated_img = Image.fromarray(
         detection.render()[0].astype('uint8')).convert('RGB')
