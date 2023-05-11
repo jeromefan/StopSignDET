@@ -2,7 +2,6 @@ import sys
 import torch
 import numpy as np
 sys.path.append('engine/yolov5')  # NOQA: E402
-from engine.grad_cam import GradCam
 from engine.yolov5.utils.general import non_max_suppression, xyxy2xywhn
 
 
@@ -16,18 +15,14 @@ def build_targets(model, data, target_label):
     return torch.tensor(targets).unsqueeze(0)
 
 
-def square_transform(model, data, data_shape):
+def square_transform(heatmap, data_shape, patch_size):
 
-    # 将 models.yolo.DetectionModel 复制并送入 GradCam 中
-    grad_cam_model = GradCam(
-        model=model, layer_name='model_23_cv3_act', cls=11)
-    heatmap = grad_cam_model(data)
     x = torch.argmax(heatmap).item() // data_shape[-1]
     y = torch.argmax(heatmap).item() % data_shape[-1]
 
-    patch = np.random.rand(1, 3, 120, 120)
+    patch = np.random.rand(1, 3, patch_size, patch_size)
     patch_transformed = np.zeros(data_shape)
-    m_size = 120
+    m_size = patch_size
     batch_size = patch_transformed.shape[0]
     for i in range(batch_size):
         # random rotation

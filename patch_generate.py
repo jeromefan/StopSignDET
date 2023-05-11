@@ -1,8 +1,10 @@
 import os
+import cv2
 import sys
 import time
 import torch
 import argparse
+import numpy as np
 
 from tqdm import tqdm
 from PIL import Image
@@ -14,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from engine.misc import build_targets, square_transform
 sys.path.append('engine/yolov5')  # NOQA: E402
+from engine.grad_cam import GradCam
 from engine.yolov5.utils.loss import ComputeLoss
 
 torch.set_printoptions(precision=4, sci_mode=False)
@@ -38,6 +41,12 @@ def get_args_parser():
         help='图像缩放大小'
     )
     parser.add_argument(
+        '-p', '--patch-size',
+        default=120,
+        type=int,
+        help='Patch 大小'
+    )
+    parser.add_argument(
         '-m', '--yolo-model',
         default='yolov5s',
         type=str,
@@ -47,7 +56,7 @@ def get_args_parser():
         '-lr', '--learning-rate',
         default=100,
         type=float,
-        help='迭代步长'
+        help='learning rate'
     )
     parser.add_argument(
         '-c', '--cls',
@@ -102,6 +111,12 @@ def main(args):
                                   device='cpu')
     detect_model.max_det = 1
 
+    grad_cam_model = GradCam(
+        model=deepcopy(detect_model.model.model),
+        layer_name='model_23_cv3_act',
+        cls=11
+    )
+
     loader = transforms.Compose([
         transforms.Resize((args.img_size, args.img_size)),
         transforms.ToTensor()
@@ -110,12 +125,27 @@ def main(args):
 
     # data
     data = loader(Image.open(args.img_path)).unsqueeze(0)
+
+    detection = detect_model(unloader(data.squeeze(0)))
+    annotated_img = Image.fromarray(
+        detection.render()[0].astype('uint8')).convert('RGB')
+    annotated_img.save(f'results/{tb_name}/ori.png')
+
+    heatmap = grad_cam_model(data)
     targets = build_targets(detect_model, data, args.cls)
     patch_transformed, mask = square_transform(
-        deepcopy(detect_model.model.model), data, data.shape)
+        heatmap, data.shape, args.patch_size)
     data, targets, patch_transformed, mask = data.to(device), targets.to(
         device), patch_transformed.to(device), mask.to(device)
     print(f'攻击目标为: {targets}')
+
+    img = cv2.cvtColor(np.array(unloader(data.squeeze(0))), cv2.COLOR_RGB2BGR)
+    heatmap = heatmap.squeeze(0).mul_(255).permute(
+        1, 2, 0).numpy().astype(np.uint8)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    gradcam = cv2.addWeighted(
+        heatmap, 0.5, img, 0.5, 0)
+    cv2.imwrite(f'results/{tb_name}/gradcam_before.png', gradcam)
 
     lr = args.learning_rate
     pbar = tqdm(range(args.max_iter))
@@ -136,9 +166,8 @@ def main(args):
             if target_pred == args.cls:
                 break
         else:
-            # break
-            target_pred = None
-            target_conf = None
+            target_pred = -1
+            target_conf = -1
 
         # Train
         model.train()
@@ -148,7 +177,7 @@ def main(args):
         data_with_patch = data_with_patch.to(device)
         target_loss, _ = compute_loss(model(data_with_patch), targets)
         target_loss.backward()
-        patch_transformed -= lr * data_with_patch.grad.data.sign()
+        patch_transformed -= lr * data_with_patch.grad.data
         patch_transformed = torch.clamp(patch_transformed, min=0., max=1.)
         if i % 100 == 0:
             lr = lr * 0.9
@@ -168,7 +197,17 @@ def main(args):
     print(f'最终攻击结果: {target_pred}')
     annotated_img = Image.fromarray(
         detection.render()[0].astype('uint8')).convert('RGB')
-    annotated_img.save(f'results/{tb_name}.png')
+    annotated_img.save(f'results/{tb_name}/attacked.png')
+
+    img = cv2.cvtColor(
+        np.array(unloader(data_with_patch.squeeze(0))), cv2.COLOR_RGB2BGR)
+    heatmap = grad_cam_model(data_with_patch.cpu())
+    heatmap = heatmap.squeeze(0).mul_(255).permute(
+        1, 2, 0).numpy().astype(np.uint8)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    gradcam = cv2.addWeighted(
+        heatmap, 0.5, img, 0.5, 0)
+    cv2.imwrite(f'results/{tb_name}/gradcam_after.png', gradcam)
 
     writer.flush()
     writer.close()

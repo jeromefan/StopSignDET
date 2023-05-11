@@ -36,6 +36,8 @@ class GradCam:
         b, c, h, w = input_img.size()
         preds, logits, _ = self.model(input_img)
         _, logits = self.gradcam_nms(preds, logits, max_det=1)
+        if logits[0].shape == torch.Size([0, 80]):
+            return torch.zeros_like(input_img)
 
         if self.cls is not None:
             score = None

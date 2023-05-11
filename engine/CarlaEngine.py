@@ -9,6 +9,7 @@ import pygame
 import weakref
 import ultralytics
 import numpy as np
+from PIL import Image
 from pathlib import Path
 
 sys.path.append('engine/yolov5')
@@ -105,17 +106,19 @@ class CarlaClient():
             array = np.frombuffer(self.image.raw_data, dtype=np.dtype("uint8"))
             array = np.reshape(array, (self.image.height, self.image.width, 4))
             ori_frame = array[:, :, :3]
+            data_rgb = cv2.cvtColor(ori_frame, cv2.COLOR_BGR2RGB)
 
             if 'yolov8' in self.yolo_model_choice:
                 yolo_result = self.yolo_model.predict(
-                    source=ori_frame,
+                    source=data_rgb,
                     classes=self.classes,
                     verbose=False
                 )
                 annotated_frame = yolo_result[0].plot()
             else:
-                annotated_frame = self.yolo_model(ori_frame).render()[0]
+                annotated_frame = self.yolo_model(data_rgb).render()[0]
 
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
             img = np.hstack((ori_frame, annotated_frame))
             self.output_video.write(img)
             self.output_ori_video.write(ori_frame)
